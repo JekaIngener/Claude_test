@@ -1,0 +1,136 @@
+.layer-panel {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  border-top: 1px solid #ddd;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.no-layers {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: #7f8c8d;
+}
+
+.no-layers p {
+  margin: 0.5rem 0;
+}
+
+.no-layers .hint {
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.layers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.layer-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem;
+  background-color: #f8f9fa;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.layer-item:hover {
+  background-color: #e9ecef;
+  border-color: #dee2e6;
+}
+
+.layer-item.selected {
+  background-color: #e3f2fd;
+  border-color: #3498db;
+}
+
+.layer-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.layer-icon {
+  font-size: 1.25rem;
+  width: 24px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.layer-name {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #2c3e50;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.layer-actions {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.layer-action-btn {
+  padding: 0.35rem 0.5rem;
+  background-color: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #555;
+  font-size: 0.85rem;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.layer-action-btn:hover:not(:disabled) {
+  background-color: #3498db;
+  color: white;
+  border-color: #3498db;
+}
+
+.layer-action-btn.delete:hover {
+  background-color: #e74c3c;
+  border-color: #e74c3c;
+}
+
+.layer-action-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.layer-action-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.layer-info-box {
+  padding: 1rem;
+  background-color: #ecf0f1;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: #555;
+  margin-top: auto;
+}
+
+.layer-info-box p {
+  margin: 0;
+}
+
+.layer-info-box strong {
+  color: #2c3e50;
+}
