@@ -18,8 +18,71 @@ const Canvas = ({
   const [resizeHandle, setResizeHandle] = useState(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [drawStart, setDrawStart] = useState(null);
+  const [previewElement, setPreviewElement] = useState(null);
+  const [snapLines, setSnapLines] = useState([]);
 
-  const handleCanvasClick = (e) => {
+  // Snapping configuration
+  const SNAP_THRESHOLD = 5; // pixels
+
+  // SNAPPING FUNCTION - Findet nächste Snap-Punkte
+  const findSnapPoints = (element, excludeId = null) => {
+    const snapPoints = { x: null, y: null, lines: [] };
+    const otherElements = elements.filter(el => el.id !== excludeId);
+
+    const elementEdges = {
+      left: element.x,
+      right: element.x + element.width,
+      centerX: element.x + element.width / 2,
+      top: element.y,
+      bottom: element.y + element.height,
+      centerY: element.y + element.height / 2
+    };
+
+    otherElements.forEach(other => {
+      if (other.type === 'line') return; // Skip lines for snapping
+
+      const otherEdges = {
+        left: other.x,
+        right: other.x + other.width,
+        centerX: other.x + other.width / 2,
+        top: other.y,
+        bottom: other.y + other.height,
+        centerY: other.y + other.height / 2
+      };
+
+      // Check horizontal snapping
+      ['left', 'right', 'centerX'].forEach(edge => {
+        ['left', 'right', 'centerX'].forEach(otherEdge => {
+          const diff = Math.abs(elementEdges[edge] - otherEdges[otherEdge]);
+          if (diff < SNAP_THRESHOLD) {
+            snapPoints.x = otherEdges[otherEdge] - (elementEdges[edge] - element.x);
+            snapPoints.lines.push({
+              type: 'vertical',
+              position: otherEdges[otherEdge]
+            });
+          }
+        });
+      });
+
+      // Check vertical snapping
+      ['top', 'bottom', 'centerY'].forEach(edge => {
+        ['top', 'bottom', 'centerY'].forEach(otherEdge => {
+          const diff = Math.abs(elementEdges[edge] - otherEdges[otherEdge]);
+          if (diff < SNAP_THRESHOLD) {
+            snapPoints.y = otherEdges[otherEdge] - (elementEdges[edge] - element.y);
+            snapPoints.lines.push({
+              type: 'horizontal',
+              position: otherEdges[otherEdge]
+            });
+          }
+        });
+      });
+    });
+
+    return snapPoints;
+  };
+
+  const handleCanvasMouseDown = (e) => {
     const rect = canvasRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -27,7 +90,6 @@ const Canvas = ({
     // Check if clicking on an element
     const clickedElement = [...elements].reverse().find(el => {
       if (el.type === 'line') {
-        // Simple line hit detection
         const dist = pointToLineDistance(x, y, el.x1, el.y1, el.x2, el.y2);
         return dist < 10;
       }
@@ -38,18 +100,211 @@ const Canvas = ({
     if (clickedElement) {
       setSelectedElement(clickedElement);
       setActiveTool(null);
-    } else {
-      // Add new element based on active tool
-      if (activeTool) {
-        const defaultSize = { width: 150, height: 100 };
-        const newElement = createNewElement(activeTool, x, y, defaultSize);
-        if (newElement) {
-          addElement(newElement);
-          setActiveTool(null);
-        }
-      } else {
-        setSelectedElement(null);
+
+      // Check for resize handles
+      const handle = getResizeHandle(x, y, clickedElement);
+      if (handle) {
+        setIsResizing(true);
+        setResizeHandle(handle);
+        setDragStart({ x, y });
+      } else if (isPointInElement(x, y, clickedElement)) {
+        setIsDragging(true);
+        setDragStart({
+          x: x - clickedElement.x,
+          y: y - clickedElement.y
+        });
       }
+    } else if (activeTool) {
+      // Start drawing new element
+      setIsDrawing(true);
+      setDrawStart({ x, y });
+
+      // Create preview element
+      const preview = createPreviewElement(activeTool, x, y);
+      setPreviewElement(preview);
+    } else {
+      setSelectedElement(null);
+    }
+  };
+
+  const handleCanvasMouseMove = (e) => {
+    if (!canvasRef.current) return;
+
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // Handle drawing new element
+    if (isDrawing && drawStart && previewElement) {
+      updatePreviewElement(x, y);
+    }
+
+    // Handle dragging selected element
+    if (isDragging && selectedElement) {
+      let newX = Math.max(0, Math.min(x - dragStart.x, canvasSize.width - selectedElement.width));
+      let newY = Math.max(0, Math.min(y - dragStart.y, canvasSize.height - selectedElement.height));
+
+      // Apply snapping
+      const snapTarget = {
+        x: newX,
+        y: newY,
+        width: selectedElement.width,
+        height: selectedElement.height
+      };
+      const snapPoints = findSnapPoints(snapTarget, selectedElement.id);
+
+      if (snapPoints.x !== null) newX = snapPoints.x;
+      if (snapPoints.y !== null) newY = snapPoints.y;
+      setSnapLines(snapPoints.lines);
+
+      if (selectedElement.type === 'line') {
+        const deltaX = newX - selectedElement.x;
+        const deltaY = newY - selectedElement.y;
+        updateElement(selectedElement.id, {
+          x: newX,
+          y: newY,
+          x1: selectedElement.x1 + deltaX,
+          y1: selectedElement.y1 + deltaY,
+          x2: selectedElement.x2 + deltaX,
+          y2: selectedElement.y2 + deltaY
+        });
+      } else {
+        updateElement(selectedElement.id, { x: newX, y: newY });
+      }
+    }
+
+    // Handle resizing selected element
+    if (isResizing && resizeHandle && selectedElement) {
+      handleResize(x, y, selectedElement, resizeHandle);
+    }
+  };
+
+  const handleCanvasMouseUp = () => {
+    // Finish drawing
+    if (isDrawing && previewElement && drawStart) {
+      // Only add if element has minimum size
+      if (previewElement.width > 10 && previewElement.height > 10) {
+        const finalElement = { ...previewElement };
+        delete finalElement.id; // Remove preview id
+        addElement(finalElement);
+      }
+      setIsDrawing(false);
+      setDrawStart(null);
+      setPreviewElement(null);
+      setActiveTool(null);
+    }
+
+    setIsDragging(false);
+    setIsResizing(false);
+    setResizeHandle(null);
+    setSnapLines([]);
+  };
+
+  const createPreviewElement = (tool, x, y) => {
+    const baseElement = {
+      id: 'preview',
+      x: x,
+      y: y,
+      width: 0,
+      height: 0,
+      color: '#000000',
+      opacity: 0.7
+    };
+
+    switch (tool) {
+      case 'rectangle':
+        return { ...baseElement, type: 'rectangle', borderWidth: 2, filled: false };
+      case 'line':
+        return {
+          id: 'preview',
+          type: 'line',
+          x1: x,
+          y1: y,
+          x2: x,
+          y2: y,
+          thickness: 2,
+          color: '#000000',
+          opacity: 0.7,
+          x: x,
+          y: y,
+          width: 0,
+          height: 0
+        };
+      case 'text':
+        return {
+          ...baseElement,
+          type: 'text',
+          text: 'Text eingeben',
+          fontSize: 16,
+          bold: false,
+          width: 100,
+          height: 30
+        };
+      case 'textField':
+        return {
+          ...baseElement,
+          type: 'textField',
+          placeholder: 'Text eingeben...',
+          multiline: false
+        };
+      case 'dateField':
+        return {
+          ...baseElement,
+          type: 'dateField'
+        };
+      case 'dropdown':
+        return {
+          ...baseElement,
+          type: 'dropdown',
+          options: ['Option 1', 'Option 2', 'Option 3']
+        };
+      case 'checkbox':
+        return {
+          ...baseElement,
+          type: 'checkbox',
+          label: 'Checkbox',
+          width: 20,
+          height: 20
+        };
+      case 'radio':
+        return {
+          ...baseElement,
+          type: 'radio',
+          options: ['Option 1', 'Option 2']
+        };
+      default:
+        return null;
+    }
+  };
+
+  const updatePreviewElement = (currentX, currentY) => {
+    if (!previewElement || !drawStart) return;
+
+    const width = Math.abs(currentX - drawStart.x);
+    const height = Math.abs(currentY - drawStart.y);
+    const x = Math.min(currentX, drawStart.x);
+    const y = Math.min(currentY, drawStart.y);
+
+    if (previewElement.type === 'line') {
+      setPreviewElement({
+        ...previewElement,
+        x1: drawStart.x,
+        y1: drawStart.y,
+        x2: currentX,
+        y2: currentY,
+        x: Math.min(drawStart.x, currentX),
+        y: Math.min(drawStart.y, currentY),
+        width: Math.abs(currentX - drawStart.x),
+        height: Math.abs(currentY - drawStart.y)
+      });
+    } else {
+      setPreviewElement({
+        ...previewElement,
+        x,
+        y,
+        width,
+        height
+      });
     }
   };
 
@@ -82,147 +337,13 @@ const Canvas = ({
     return Math.sqrt(dx * dx + dy * dy);
   };
 
-  const createNewElement = (tool, x, y, size) => {
-    const baseElement = {
-      x: x - size.width / 2,
-      y: y - size.height / 2,
-      width: size.width,
-      height: size.height,
-      color: '#000000',
-      opacity: 1
-    };
-
-    switch (tool) {
-      case 'rectangle':
-        return { ...baseElement, type: 'rectangle', borderWidth: 2, filled: false };
-      case 'line':
-        return {
-          type: 'line',
-          x1: x,
-          y1: y,
-          x2: x + 100,
-          y2: y + 100,
-          thickness: 2,
-          color: '#000000',
-          opacity: 1,
-          x: x,
-          y: y,
-          width: 100,
-          height: 100
-        };
-      case 'text':
-        return {
-          ...baseElement,
-          type: 'text',
-          text: 'Text eingeben',
-          fontSize: 16,
-          bold: false
-        };
-      case 'textField':
-        return {
-          ...baseElement,
-          type: 'textField',
-          placeholder: 'Text eingeben...',
-          multiline: false
-        };
-      case 'dateField':
-        return {
-          ...baseElement,
-          type: 'dateField',
-          width: 150,
-          height: 30
-        };
-      case 'dropdown':
-        return {
-          ...baseElement,
-          type: 'dropdown',
-          options: ['Option 1', 'Option 2', 'Option 3'],
-          width: 150,
-          height: 30
-        };
-      case 'checkbox':
-        return {
-          x: x,
-          y: y,
-          width: 20,
-          height: 20,
-          type: 'checkbox',
-          label: 'Checkbox',
-          color: '#000000',
-          opacity: 1
-        };
-      case 'radio':
-        return {
-          ...baseElement,
-          type: 'radio',
-          options: ['Option 1', 'Option 2'],
-          height: 60
-        };
-      default:
-        return null;
-    }
-  };
-
-  const handleMouseDown = (e) => {
-    if (!selectedElement) return;
-
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    // Check for resize handles
-    const handle = getResizeHandle(x, y, selectedElement);
-    if (handle) {
-      setIsResizing(true);
-      setResizeHandle(handle);
-      setDragStart({ x, y });
-    } else if (isPointInElement(x, y, selectedElement)) {
-      setIsDragging(true);
-      setDragStart({
-        x: x - selectedElement.x,
-        y: y - selectedElement.y
-      });
-    }
-  };
-
-  const handleMouseMove = (e) => {
-    if (!selectedElement) return;
-
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    if (isDragging) {
-      const newX = Math.max(0, Math.min(x - dragStart.x, canvasSize.width - selectedElement.width));
-      const newY = Math.max(0, Math.min(y - dragStart.y, canvasSize.height - selectedElement.height));
-
-      if (selectedElement.type === 'line') {
-        const deltaX = newX - selectedElement.x;
-        const deltaY = newY - selectedElement.y;
-        updateElement(selectedElement.id, {
-          x: newX,
-          y: newY,
-          x1: selectedElement.x1 + deltaX,
-          y1: selectedElement.y1 + deltaY,
-          x2: selectedElement.x2 + deltaX,
-          y2: selectedElement.y2 + deltaY
-        });
-      } else {
-        updateElement(selectedElement.id, { x: newX, y: newY });
-      }
-    } else if (isResizing && resizeHandle) {
-      handleResize(x, y, selectedElement, resizeHandle);
-    }
-  };
-
-  const handleMouseUp = () => {
-    setIsDragging(false);
-    setIsResizing(false);
-    setResizeHandle(null);
-  };
-
   const getResizeHandle = (x, y, element) => {
-    if (element.type === 'line') return null;
+    if (element.type === 'line') {
+      // Check line endpoints
+      if (Math.abs(x - element.x1) < 8 && Math.abs(y - element.y1) < 8) return 'start';
+      if (Math.abs(x - element.x2) < 8 && Math.abs(y - element.y2) < 8) return 'end';
+      return null;
+    }
 
     const handleSize = 8;
     const handles = [
@@ -256,60 +377,79 @@ const Canvas = ({
   const handleResize = (x, y, element, handle) => {
     let newProps = {};
 
-    switch (handle) {
-      case 'se':
-        newProps = {
-          width: Math.max(20, x - element.x),
-          height: Math.max(20, y - element.y)
-        };
-        break;
-      case 'sw':
-        newProps = {
-          x: Math.min(x, element.x + element.width - 20),
-          width: Math.max(20, element.x + element.width - x),
-          height: Math.max(20, y - element.y)
-        };
-        break;
-      case 'ne':
-        newProps = {
-          y: Math.min(y, element.y + element.height - 20),
-          width: Math.max(20, x - element.x),
-          height: Math.max(20, element.y + element.height - y)
-        };
-        break;
-      case 'nw':
-        newProps = {
-          x: Math.min(x, element.x + element.width - 20),
-          y: Math.min(y, element.y + element.height - 20),
-          width: Math.max(20, element.x + element.width - x),
-          height: Math.max(20, element.y + element.height - y)
-        };
-        break;
-      case 'e':
-        newProps = { width: Math.max(20, x - element.x) };
-        break;
-      case 'w':
-        newProps = {
-          x: Math.min(x, element.x + element.width - 20),
-          width: Math.max(20, element.x + element.width - x)
-        };
-        break;
-      case 'n':
-        newProps = {
-          y: Math.min(y, element.y + element.height - 20),
-          height: Math.max(20, element.y + element.height - y)
-        };
-        break;
-      case 's':
-        newProps = { height: Math.max(20, y - element.y) };
-        break;
+    if (element.type === 'line') {
+      if (handle === 'start') {
+        newProps = { x1: x, y1: y };
+      } else if (handle === 'end') {
+        newProps = { x2: x, y2: y };
+      }
+      // Update bounding box
+      const newX = Math.min(newProps.x1 || element.x1, newProps.x2 || element.x2);
+      const newY = Math.min(newProps.y1 || element.y1, newProps.y2 || element.y2);
+      const newWidth = Math.abs((newProps.x2 || element.x2) - (newProps.x1 || element.x1));
+      const newHeight = Math.abs((newProps.y2 || element.y2) - (newProps.y1 || element.y1));
+      newProps = { ...newProps, x: newX, y: newY, width: newWidth, height: newHeight };
+    } else {
+      switch (handle) {
+        case 'se':
+          newProps = {
+            width: Math.max(20, x - element.x),
+            height: Math.max(20, y - element.y)
+          };
+          break;
+        case 'sw':
+          newProps = {
+            x: Math.min(x, element.x + element.width - 20),
+            width: Math.max(20, element.x + element.width - x),
+            height: Math.max(20, y - element.y)
+          };
+          break;
+        case 'ne':
+          newProps = {
+            y: Math.min(y, element.y + element.height - 20),
+            width: Math.max(20, x - element.x),
+            height: Math.max(20, element.y + element.height - y)
+          };
+          break;
+        case 'nw':
+          newProps = {
+            x: Math.min(x, element.x + element.width - 20),
+            y: Math.min(y, element.y + element.height - 20),
+            width: Math.max(20, element.x + element.width - x),
+            height: Math.max(20, element.y + element.height - y)
+          };
+          break;
+        case 'e':
+          newProps = { width: Math.max(20, x - element.x) };
+          break;
+        case 'w':
+          newProps = {
+            x: Math.min(x, element.x + element.width - 20),
+            width: Math.max(20, element.x + element.width - x)
+          };
+          break;
+        case 'n':
+          newProps = {
+            y: Math.min(y, element.y + element.height - 20),
+            height: Math.max(20, element.y + element.height - y)
+          };
+          break;
+        case 's':
+          newProps = { height: Math.max(20, y - element.y) };
+          break;
+        default:
+          break;
+      }
     }
 
     updateElement(element.id, newProps);
   };
 
   useEffect(() => {
-    if (isDragging || isResizing) {
+    const handleMouseMove = (e) => handleCanvasMouseMove(e);
+    const handleMouseUp = () => handleCanvasMouseUp();
+
+    if (isDragging || isResizing || isDrawing) {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
       return () => {
@@ -317,7 +457,7 @@ const Canvas = ({
         window.removeEventListener('mouseup', handleMouseUp);
       };
     }
-  }, [isDragging, isResizing, selectedElement, dragStart, resizeHandle]);
+  }, [isDragging, isResizing, isDrawing, selectedElement, dragStart, resizeHandle, drawStart, previewElement]);
 
   return (
     <div
@@ -328,9 +468,9 @@ const Canvas = ({
         height: canvasSize.height,
         cursor: activeTool ? 'crosshair' : 'default'
       }}
-      onClick={handleCanvasClick}
-      onMouseDown={handleMouseDown}
+      onMouseDown={handleCanvasMouseDown}
     >
+      {/* Render all elements */}
       {elements.map((element) => (
         <CanvasElement
           key={element.id}
@@ -339,6 +479,46 @@ const Canvas = ({
         />
       ))}
 
+      {/* Render preview element */}
+      {previewElement && (
+        <CanvasElement
+          element={previewElement}
+          isSelected={false}
+        />
+      )}
+
+      {/* Render snap lines */}
+      {snapLines.map((line, index) => (
+        <div
+          key={index}
+          className="snap-line"
+          style={
+            line.type === 'vertical'
+              ? {
+                  position: 'absolute',
+                  left: line.position,
+                  top: 0,
+                  width: '1px',
+                  height: '100%',
+                  backgroundColor: '#00ff00',
+                  pointerEvents: 'none',
+                  zIndex: 1000
+                }
+              : {
+                  position: 'absolute',
+                  left: 0,
+                  top: line.position,
+                  width: '100%',
+                  height: '1px',
+                  backgroundColor: '#00ff00',
+                  pointerEvents: 'none',
+                  zIndex: 1000
+                }
+          }
+        />
+      ))}
+
+      {/* Selection box */}
       {selectedElement && (
         <SelectionBox element={selectedElement} />
       )}
@@ -525,7 +705,7 @@ const CanvasElement = ({ element, isSelected }) => {
 
 const SelectionBox = ({ element }) => {
   if (element.type === 'line') {
-    // For lines, just show endpoint handles
+    // For lines, show endpoint handles
     return (
       <>
         <div
